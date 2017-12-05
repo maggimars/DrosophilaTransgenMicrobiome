@@ -2,7 +2,7 @@
 
 `source activate qiime2-2017.10`
 
-## import the data ...
+**import the data**
 
   `Csamps=/Users/brisbin/Desktop/carmen2/seqs`
   Check: `echo $Csamps`
@@ -99,7 +99,7 @@ remove media samples:
       --i-tree unrooted-tree.qza \
       --o-rooted-tree rooted-tree
 
-**(phylogenetic)**
+**calculate phylogenetic diversity metrics**
 
       qiime diversity core-metrics-phylogenetic \
       --i-phylogeny rooted-tree.qza \
@@ -135,7 +135,7 @@ remove media samples:
       --p-where "Generation='F3'" \
       --o-filtered-distance-matrix core-metrics-phylogenetic/F3-weighted_unifrac_distance_matrix.qza            
 
-PERMANOVAs
+**PERMANOVAs**
 pair-wise by Treatment
 
     qiime diversity beta-group-significance \
