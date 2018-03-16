@@ -225,7 +225,8 @@ Drag and drop `taxonomy.qzv` in view.qiime2.org window. In the top left of the w
 outPut = `tree.nwk`
 
 
-**OTU table**     
+**OTU table**    
+
     qiime tools extract \
     ./dada2/table.qza \
     --output-dir ./
