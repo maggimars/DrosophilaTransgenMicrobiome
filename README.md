@@ -236,3 +236,5 @@ convert `.biom` file to `.txt` file for R
     biom convert -i ./ExtractedFeatureTable/data/feature-table.biom -o ./feature-table.txt --to-tsv
 
 Open text file and format - remove `#Constructed from biom file` line and the `#` in front of the first column name
+
+Continue Analysis with `Phyloseq.R`
