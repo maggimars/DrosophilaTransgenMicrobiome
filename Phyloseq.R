@@ -247,5 +247,81 @@ adonis(vegdist(OTUs, method = "bray") ~ Treatment, data = metaPW)
 #Treatment  1    0.1456 0.145605  1.6786 0.05656   0.17
 ##Total     29    2.5744                  1.00000       
 
+## DESeq2 ##
+### Differential abundance of features ####
+library("DESeq2", lib.loc="/Library/Frameworks/R.framework/Versions/3.4/Resources/library")
+#fully filtered (prevalence, taxonomy) physeq object  = ps3
+
+#subset by Diet
+testdiets <- c("CD", "NSD")
+ps3cn <- subset_samples(ps3, Treatment %in% testdiets)
+
+#subset by generation
+ps3F0 <- subset_samples(ps3cn, Generation=="F0")
+ps3F1 <- subset_samples(ps3cn, Generation=="F1")
+
+#F0
+ddse <- phyloseq_to_deseq2(ps3F0, ~Treatment)
+ddse2 <- DESeq(ddse, test="Wald", fitType="parametric")
+res<- results(ddse2,  cooksCutoff = FALSE)
+alpha = 0.05
+sigtab = res[which(res$padj < alpha), ]
+head(sigtab)
+#15 Svs are Significantly differentially abundant between NSD and CD in the F0
+# log2 fold change (MLE): Treatment NSD vs CD 
+#NSD was compared to CD
+# + meand more in NSD and - means less in NSD
+
+#add taxonomy to significant features 
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(ps3F0)[rownames(sigtab), ], "matrix"))
+
+#figure for F0 results
+#D2 level
+x = tapply(sigtab$log2FoldChange, sigtab$D2, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$D2 = factor(as.character(sigtab$D2), levels=names(x))
+# D5 level
+x = tapply(sigtab$log2FoldChange, sigtab$D5, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$D5 = factor(as.character(sigtab$D5), levels=names(x))
+#plot F0
+F0sigplot<- ggplot(sigtab, aes(x=D2, y=log2FoldChange, color = D5)) + geom_point(size=3, alpha = 0.7) + theme(legend.title=element_blank()) +
+   ggtitle("F0 - log2 fold change (MLE): Treatment NSD vs CD ") +
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))# +scale_color_manual(values=P)
+
+F0sigplot
+
+#make fold change table for all results (not significant)
+restab = cbind(as(res, "data.frame"), as(tax_table(ps3F0)[rownames(res), ], "matrix"))
+restabCC <- restab[complete.cases(restab),]
+#figure for all F0 results
+F0resplot<- ggplot(restabCC, aes(x=D2, y=log2FoldChange)) + geom_point(size=3, alpha = 0.7) + theme(legend.title=element_blank()) +
+  ggtitle("F1 - log2 fold change (MLE): Treatment NSD vs CD ") +
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))# +scale_color_manual(values=P)
+
+F0resplot
+
+#F1
+ddse <- phyloseq_to_deseq2(ps3F1, ~Treatment)
+ddse2 <- DESeq(ddse, test="Wald", fitType="parametric")
+res<- results(ddse2,  cooksCutoff = FALSE)
+alpha = 0.05
+sigtab = res[which(res$padj < alpha), ]
+head(sigtab)
+# No significantly different Svs
+#log2 fold change (MLE): Treatment NSD vs CD
+
+#make fold change table for all results (not significant)
+restab = cbind(as(res, "data.frame"), as(tax_table(ps3F1)[rownames(res), ], "matrix"))
+
+restabCC <- restab[complete.cases(restab),]
+#figure for F1 results
+
+F1resplot<- ggplot(restabCC, aes(x=D2, y=log2FoldChange)) + geom_point(size=3, alpha = 0.7) + theme(legend.title=element_blank()) +
+  ggtitle("F1 - log2 fold change (MLE): Treatment NSD vs CD ") +
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))# +scale_color_manual(values=P)
+
+F1resplot
+
 
 
