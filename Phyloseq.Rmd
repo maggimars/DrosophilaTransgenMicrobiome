@@ -1,3 +1,15 @@
+---
+title: "Phyloseq"
+author: "Maggi Mars & Sasha Mikheyev"
+date: "4/17/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+```{r loadLibraries}
 library("phyloseq")
 library("ggplot2")
 theme_set(theme_bw())
@@ -6,7 +18,11 @@ library("tidyr")
 library("RColorBrewer")
 library(gridExtra)
 library(vegan)
+library(DESeq2)
+library(plyr)
+```
 
+```{r abundance}
 P <- brewer.pal(12, "Paired")
 S2 <- brewer.pal(8, "Set2")
 S1 <- brewer.pal(8, "Set1")
@@ -108,18 +124,6 @@ ps2ra = transform_sample_counts(ps2, function(x){x / sum(x)})
 ps2raF0 <- subset_samples(ps2ra, Generation=="F0")
 ps2raF1 <- subset_samples(ps2ra, Generation=="F1")
 
-ordu1F0 = ordinate(ps2raF0, "PCoA", "unifrac", weighted=TRUE)
-ordu1F1 = ordinate(ps2raF1, "PCoA", "unifrac", weighted=TRUE)
-
-p1F0<-plot_ordination(ps2raF0, ordu1F0, color="Treatment")+scale_color_manual(values=colors)+ ggtitle("F0 - Weighted Unifrac")
-p1F1<-plot_ordination(ps2raF1, ordu1F1, color="Treatment")+scale_color_manual(values=colors)+ ggtitle("F1 - Weighted Unifrac")
-
-ordu2F0 = ordinate(ps2raF0, "PCoA", "bray")
-ordu2F1 = ordinate(ps2raF1, "PCoA", "bray")
-
-p2F0<- plot_ordination(ps2raF0, ordu2F0, color="Treatment")+scale_color_manual(values=colors)+ ggtitle("F0 - Bray-Curtis")
-p2F1<- plot_ordination(ps2raF1, ordu2F1, color="Treatment")+scale_color_manual(values=colors)+ ggtitle("F1 - Bray-Curtis")
-
 #Relabundance Plots
 taxabarplot<-plot_bar(ps2ra, fill = "D2") + scale_y_continuous(expand = c(0, 0)) + ggtitle("Level 2") + scale_fill_manual(values=colors2) + theme(legend.title=element_blank()) + geom_bar(aes( fill=D2), stat="identity", position="stack")
 
@@ -166,18 +170,6 @@ ps3ra = transform_sample_counts(ps3, function(x){x / sum(x)})
 ps3raF0 <- subset_samples(ps3ra, Generation=="F0")
 ps3raF1 <- subset_samples(ps3ra, Generation=="F1")
 
-ordu1F0 = ordinate(ps3raF0, "PCoA", "unifrac", weighted=TRUE)
-ordu1F1 = ordinate(ps3raF1, "PCoA", "unifrac", weighted=TRUE)
-
-p1F0<-plot_ordination(ps3raF0, ordu1F0, color="Treatment")+scale_color_manual(values=colors)+ ggtitle("F0 - Weighted Unifrac")
-p1F1<-plot_ordination(ps3raF1, ordu1F1, color="Treatment")+scale_color_manual(values=colors)+ ggtitle("F1 - Weighted Unifrac")
-
-ordu2F0 = ordinate(ps3raF0, "PCoA", "bray")
-ordu2F1 = ordinate(ps3raF1, "PCoA", "bray")
-
-p2F0<- plot_ordination(ps3raF0, ordu2F0, color="Treatment")+scale_color_manual(values=colors)+ ggtitle("F0 - Bray-Curtis")
-p2F1<- plot_ordination(ps3raF1, ordu2F1, color="Treatment")+scale_color_manual(values=colors)+ ggtitle("F1 - Bray-Curtis")
-
 #Relabundance Plots
 filterGens = c("F0", "F1")
 ps4 <- subset_samples(ps3ra, Generation %in% filterGens)
@@ -194,10 +186,9 @@ g_legend<-function(a.gplot){
 }
 legend <- g_legend(taxabarplot)
 SVlegend <- grid.arrange(legend)
+```
 
-
-#PERMANOVA with Vegan
-
+```{r adonis}
 #F0
 OTUs <- t(data.frame(otu_table(ps3raF0))) #get data frame of OTUs from phyloseq object
 meta <- metatable[metatable$Generation=="F0",]
@@ -205,25 +196,12 @@ meta <- meta[meta$SampleType=="Gut",]
 
 adonis(vegdist(OTUs, method = "bray") ~ Treatment, data = meta)
 
-#RESULTS = SIGNIFICANT
-#           Df SumsOfSqs MeanSqs F.Model      R2 Pr(>F)
-#Treatment  2   0.57473 0.28737  6.9801 0.39932  0.001 ***
-#Residuals 21   0.86456 0.04117         0.60068
-#Total     23   1.43929                 1.00000
-
-#  Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
-
 #pairwise CD ~ NS F0
 CDNS0 <- subset_samples(ps3raF0, Treatment %in% c("CD" , "NSD"))
 OTUs <- t(data.frame(otu_table(CDNS0))) #get data frame of OTUs from phyloseq object
 metaPW <- meta[meta$Treatment %in% c("NSD", "CD"),]
 adonis(vegdist(OTUs, method = "bray") ~ Treatment, data = metaPW)
 
-#Results = Significant
-#           Df SumsOfSqs MeanSqs F.Model      R2 Pr(>F)
-#Treatment  1   0.36891 0.36891  9.0982 0.39389  0.001 ***
-#Residuals 14   0.56767 0.04055         0.60611
-#Total     15   0.93658                 1.00000
 
 #F1
 OTUs <- t(data.frame(otu_table(ps3raF1))) #get data frame of OTUs from phyloseq object
@@ -231,98 +209,39 @@ meta <- metatable[metatable$Generation=="F1",]
 meta <- meta[meta$SampleType=="Gut",]
 adonis(vegdist(OTUs, method = "bray") ~ Treatment, data = meta)
 
-#RESULTS = Not Significant
-#          Df SumsOfSqs  MeanSqs F.Model      R2 Pr(>F)
-#Treatment  2    0.1999 0.099948  1.0886 0.04928  0.336
-#Residuals 42    3.8561 0.091812         0.95072
-#Total     44    4.0560                  1.00000
-
 #pairwise CD ~ NS F1
 CDNS1 <- subset_samples(ps3raF1, Treatment %in% c("CD" , "NSD"))
 OTUs <- t(data.frame(otu_table(CDNS1))) #get data frame of OTUs from phyloseq object
 metaPW <- meta[meta$Treatment %in% c("NSD", "CD"),]
 adonis(vegdist(OTUs, method = "bray") ~ Treatment, data = metaPW)
+```
 
-#RESULTS = NOT Significant
-#           Df SumsOfSqs  MeanSqs F.Model      R2 Pr(>F)
-#Treatment  1    0.1456 0.145605  1.6786 0.05656   0.17
-##Total     29    2.5744                  1.00000
+## Analyze responses using phyloseq
 
-## DESeq2 ##
-### Differential abundance of features ####
-library("DESeq2", lib.loc="/Library/Frameworks/R.framework/Versions/3.4/Resources/library")
-#fully filtered (prevalence, taxonomy) physeq object  = ps3
-
-#subset by Diet
+```{r phyloseq}
 testdiets <- c("CD", "NSD")
 ps3cn <- subset_samples(ps3, Treatment %in% testdiets)
+ps3F01 <- subset_samples(ps3cn, Generation=="F0" | Generation=="F1")
+ddse <- phyloseq_to_deseq2(ps3F01, ~Treatment+Generation+ Treatment:Generation)
+ddse2 <- DESeq(ddse, test="Wald", fitType="local")
+resultsNames(ddse2)
+res <- results(ddse2,  name = "TreatmentNSD.GenerationF1")
 
-#subset by generation
-ps3F0 <- subset_samples(ps3cn, Generation=="F0")
-ps3F1 <- subset_samples(ps3cn, Generation=="F1")
+alpha <-  0.05
+sigtab <- res[which(res$padj < alpha), ]
 
-#F0
-ddse <- phyloseq_to_deseq2(ps3F0, ~Treatment)
-ddse2 <- DESeq(ddse, test="Wald", fitType="parametric")
-res<- results(ddse2,  cooksCutoff = FALSE)
-alpha = 0.05
-sigtab = res[which(res$padj < alpha), ]
-head(sigtab)
-#15 Svs are Significantly differentially abundant between NSD and CD in the F0
-# log2 fold change (MLE): Treatment NSD vs CD
-#NSD was compared to CD
-# + meand more in NSD and - means less in NSD
+taxCounts <- list()
+i <- 1
+for (taxon in rownames(sigtab)) {
+  taxName <- as.data.frame(tax_table(ps3F01)[taxon])[,6]
+  print(taxName)
+  dTrt <- plotCounts(ddse2, gene=taxon, intgroup="Treatment",returnData=TRUE)
+  dGen <- plotCounts(ddse2, gene=taxon, intgroup="Generation",returnData=TRUE)
+  tc <- cbind(dTrt,dGen)[,-3]
+  tc$species <- taxName
+  taxCounts[[i]] <- tc
+  i <- i + 1
+}
 
-#add taxonomy to significant features
-sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(ps3F0)[rownames(sigtab), ], "matrix"))
-
-#figure for F0 results
-#D2 level
-x = tapply(sigtab$log2FoldChange, sigtab$D2, function(x) max(x))
-x = sort(x, TRUE)
-sigtab$D2 = factor(as.character(sigtab$D2), levels=names(x))
-# D5 level
-x = tapply(sigtab$log2FoldChange, sigtab$D5, function(x) max(x))
-x = sort(x, TRUE)
-sigtab$D5 = factor(as.character(sigtab$D5), levels=names(x))
-#plot F0
-F0sigplot<- ggplot(sigtab, aes(x=D2, y=log2FoldChange, color = D5)) + geom_point(size=3, alpha = 0.7) + theme(legend.title=element_blank()) +
-   ggtitle("F0 - log2 fold change (MLE): Treatment NSD vs CD ") +
-  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))# +scale_color_manual(values=P)
-
-F0sigplot
-
-#make fold change table for all results (not significant)
-restab = cbind(as(res, "data.frame"), as(tax_table(ps3F0)[rownames(res), ], "matrix"))
-restabCC <- restab[complete.cases(restab),]
-#figure for all F0 results
-F0resplot<- ggplot(restabCC, aes(x=D2, y=log2FoldChange)) + geom_point(size=3, alpha = 0.7) + theme(legend.title=element_blank()) +
-  ggtitle("F1 - log2 fold change (MLE): Treatment NSD vs CD ") +
-  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))# +scale_color_manual(values=P)
-
-F0resplot
-
-#F1
-ddse <- phyloseq_to_deseq2(ps3F1, ~Treatment)
-ddse2 <- DESeq(ddse, test="Wald", fitType="parametric")
-res<- results(ddse2,  cooksCutoff = FALSE)
-alpha = 0.05
-sigtab = res[which(res$padj < alpha), ]
-head(sigtab)
-# No significantly different Svs
-#log2 fold change (MLE): Treatment NSD vs CD
-
-#make fold change table for all results (not significant)
-restab = cbind(as(res, "data.frame"), as(tax_table(ps3F1)[rownames(res), ], "matrix"))
-
-restabCC <- restab[complete.cases(restab),]
-#figure for F1 results
-
-F1resplot<- ggplot(restabCC, aes(x=D2, y=log2FoldChange)) + geom_point(size=3, alpha = 0.7) + theme(legend.title=element_blank()) +
-  ggtitle("F1 - log2 fold change (MLE): Treatment NSD vs CD ") +
-  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))# +scale_color_manual(values=P)
-
-F1resplot
-
-
-
+ggplot(rbind.fill(taxCounts), aes(x=Treatment, y=count, color=Treatment))+ geom_boxplot(position=position_dodge()) + scale_y_log10(breaks=c(25,100,400))+facet_grid(species~Generation, scale = "free_y")
+```
