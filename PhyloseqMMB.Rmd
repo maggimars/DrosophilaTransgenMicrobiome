@@ -1,0 +1,340 @@
+---
+title: "Transgenerational Microbiome"
+author: "Maggi Brisbin"
+date: "May 9, 2018"
+output: 
+  html_document:
+    toc: true # table of content true
+    toc_depth: 3  # upto three depths of headings (specified by #, ## and ###)
+    number_sections: true  ## if you want number sections at each table header
+    theme: united  # many options for theme, this one is my favorite.
+    highlight: tango  # specifies the syntax highlighting style
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE, fig.path='figures/', fig.width=8, fig.height=5 )
+```
+
+Load Packages 
+```{r loadLibraries, message=FALSE}
+library("phyloseq")
+library("ggplot2")
+theme_set(theme_bw())
+library("dplyr")
+library("tidyr")
+library("RColorBrewer")
+library(gridExtra)
+library("vegan")
+library("DESeq2")
+```
+set colors
+```{r}
+P <- brewer.pal(12, "Paired")
+S2 <- brewer.pal(8, "Set2")
+S1 <- brewer.pal(8, "Set1")
+D2 <- brewer.pal(8, "Dark2")
+colors<- c(P, S2, S1,D2)
+```
+# Load Data 
+## taxonomy
+saved as tsv from qiime2
+```{r}
+taxonomy<- read.delim("Taxonomy.tsv") 
+names(taxonomy) <- c("row", "tax", "Confidence")
+row.names(taxonomy) <-taxonomy[[1]]
+taxonomy <- taxonomy[,(-1)]
+taxonomy <-  separate(taxonomy, tax, c("D0","D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "D14"), sep = ";", fill = "right")
+taxonomy <- taxonomy[,c(1:6)]
+taxmat <- as.matrix(taxonomy)
+TAX = tax_table(taxmat)
+```
+## metadata
+```{r}
+metatable <- read.delim("Metadata2.txt")
+row.names(metatable) <- metatable[[1]]
+metatable<- metatable[,(-1)]
+META <- sample_data(metatable)
+```
+## phylogenetic tree
+only necessary for Unifrac distances
+```{r}
+TREE<- read_tree("tree.nwk")
+```
+## SV table 
+```{r}
+Svtab <- read.delim("feature-table.txt")
+row.names(Svtab)<-Svtab[[1]] #make OTU ID the row names
+Svtab<-Svtab[,-(1)] # remove OTU ID column
+fmat <- as.matrix(Svtab) 
+OTU = otu_table(fmat, taxa_are_rows = TRUE)
+```
+##Make Phyloseq object
+```{r}
+ps<- phyloseq(OTU, TAX, META, TREE)
+```
+#Preprocessing and filtering
+##Taxonomic Filtering
+Gut Only
+```{r}
+ps<- subset_samples(ps, SampleType=="Gut")
+```
+remove samples with D0 (domain), unassigned.
+```{r}
+ps <- subset_taxa(ps, D0=="D_0__Bacteria")
+
+```
+remove phyla that cannot be part of microbiome
+```{r}
+filterPhyla = c("D_2__Chloroplast" , " D_2__Cyanobacteria")
+ps = subset_taxa(ps, !D2 %in% filterPhyla)
+```
+##Prevalence Filtering
+dotted line on graph is 5% prevalence
+```{r}
+prevdf = apply(X = otu_table(ps),
+               MARGIN = ifelse(taxa_are_rows(ps), yes = 1, no = 2),
+               FUN = function(x){sum(x > 0)})
+
+prevdf = data.frame(Prevalence = prevdf,
+                    TotalAbundance = taxa_sums(ps),
+                    tax_table(ps))
+
+ggplot(prevdf, aes(TotalAbundance, Prevalence / nsamples(ps),color=D2)) +
+  # Include a guess for parameter
+  geom_hline(yintercept = 0.05, alpha = 0.5, linetype = 2) +  geom_point(size = 2, alpha = 0.7) +
+  scale_x_log10() +  xlab("Total Abundance") + ylab("Prevalence [Frac. Samples]") +
+  facet_wrap(~D2) + theme(legend.position="none")
+```
+
+Apply 5% filtering
+```{r}
+prevalenceThreshold = 0.05 * nsamples(ps)
+keepTaxa = rownames(prevdf)[(prevdf$Prevalence >= prevalenceThreshold)]
+ps2 = prune_taxa(keepTaxa, ps)
+
+prevdf2 = apply(X = otu_table(ps2),
+               MARGIN = ifelse(taxa_are_rows(ps2), yes = 1, no = 2),
+               FUN = function(x){sum(x > 0)})
+
+prevdf2 = data.frame(Prevalence = prevdf2,
+                    TotalAbundance = taxa_sums(ps2),
+                    tax_table(ps2))
+
+ggplot(prevdf2, aes(TotalAbundance, Prevalence / nsamples(ps),color=D2)) +
+  # Include a guess for parameter
+  geom_hline(yintercept = 0.05, alpha = 0.5, linetype = 2) +  geom_point(size = 2, alpha = 0.7) +
+  scale_x_log10() +  xlab("Total Abundance") + ylab("Prevalence [Frac. Samples]") +
+  facet_wrap(~D1) + theme(legend.position="none")
+```
+
+Remove all taxa that are D1 == NA 
+```{r}
+filterPhyla = c( "D_1__Actinobacteria", "D_1__Firmicutes", "D_1__Proteobacteria")
+ps3 = subset_taxa(ps2, D1 %in% filterPhyla)
+```
+Final Prevalence Plot
+```{r}
+prevdf3 = apply(X = otu_table(ps3),
+                MARGIN = ifelse(taxa_are_rows(ps3), yes = 1, no = 2),
+                FUN = function(x){sum(x > 0)})
+
+prevdf3 = data.frame(Prevalence = prevdf3,
+                     TotalAbundance = taxa_sums(ps3),
+                     tax_table(ps3))
+
+plyr::ddply(prevdf3, "D1", function(df1){cbind(mean(df1$Prevalence),sum(df1$Prevalence))})
+
+ggplot(prevdf3, aes(TotalAbundance, Prevalence / nsamples(ps3),color=D2)) +
+  # Include a guess for parameter
+  geom_hline(yintercept = 0.01, alpha = 0.5, linetype = 2) +  geom_point(size = 2, alpha = 0.7) +
+  scale_x_log10() +  xlab("Total Abundance") + ylab("Prevalence [Frac. Samples]") +
+  facet_wrap(~D2) + theme(legend.position="none")
+```
+
+## Relative abundance
+```{r}
+ps3ra = transform_sample_counts(ps3, function(x){x / sum(x) * 100})
+```
+# Relative Abundance Plots
+```{r}
+filterGens = c("F0", "F1")
+ps4 <- subset_samples(ps3ra, Generation %in% filterGens)
+taxabarplot<-plot_bar(ps4, fill = "D2") + scale_y_continuous(expand = c(0, 0)) + ggtitle("F0 & F1 - Level 2 Taxonomy") + scale_fill_manual(values=colors) + theme(legend.title=element_blank()) + geom_bar(aes( fill=D2), stat="identity", position="stack")
+```
+
+```{r, echo=FALSE}
+taxabarplot + theme(legend.position="none")
+```
+
+```{r, echo=FALSE}
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  legend
+}
+legend <- g_legend(taxabarplot)
+SVlegend <- grid.arrange(legend)
+```
+
+#PCA by generation
+## Weighted Unifrac
+weighted unifrac distance PCA
+```{r}
+ps3raF0 <- subset_samples(ps3ra, Generation=="F0")
+ps3raF1 <- subset_samples(ps3ra, Generation=="F1")
+
+ordu1F0 = ordinate(ps3raF0, "PCoA", "unifrac", weighted=TRUE)
+ordu1F1 = ordinate(ps3raF1, "PCoA", "unifrac", weighted=TRUE)
+
+p1F0<-plot_ordination(ps3raF0, ordu1F0, color="Treatment")+scale_color_manual(values=colors)+ ggtitle("F0 - Weighted Unifrac")
+p1F1<-plot_ordination(ps3raF1, ordu1F1, color="Treatment")+scale_color_manual(values=colors)+ ggtitle("F1 - Weighted Unifrac")
+```
+F0, weighted Unifrac
+```{r, echo=FALSE}
+p1F0
+```
+F1, weighted Unifrac 
+```{r, echo=FALSE}
+p1F1
+```
+## Bray-Curtis
+```{r}
+ordu2F0 = ordinate(ps3raF0, "PCoA", "bray")
+ordu2F1 = ordinate(ps3raF1, "PCoA", "bray")
+
+p2F0<- plot_ordination(ps3raF0, ordu2F0, color="Treatment")+scale_color_manual(values=colors)+ ggtitle("F0 - Bray-Curtis")
+p2F1<- plot_ordination(ps3raF1, ordu2F1, color="Treatment")+scale_color_manual(values=colors)+ ggtitle("F1 - Bray-Curtis")
+```
+
+```{r, echo=FALSE}
+p2F0
+```
+
+```{r, echo=FALSE}
+p2F1
+```
+
+#PERMANOVA with Vegan
+F0
+```{r}
+set.seed(1)
+OTUs <- t(data.frame(otu_table(ps3raF0))) #get data frame of OTUs from phyloseq object
+meta <- metatable[metatable$Generation=="F0",]
+meta <- meta[meta$SampleType=="Gut",]
+
+adonis(vegdist(OTUs, method = "bray") ~ Treatment, data = meta)
+```
+
+pairwise CD~NS F0
+```{r}
+set.seed(1)
+CDNS0 <- subset_samples(ps3raF0, Treatment %in% c("CD" , "NSD"))
+OTUs <- t(data.frame(otu_table(CDNS0))) 
+metaPW <- meta[meta$Treatment %in% c("NSD", "CD"),]
+adonis(vegdist(OTUs, method = "bray") ~ Treatment, data = metaPW)
+```
+
+F1
+```{r}
+set.seed(1)
+OTUs <- t(data.frame(otu_table(ps3raF1))) 
+meta <- metatable[metatable$Generation=="F1",]
+meta <- meta[meta$SampleType=="Gut",]
+adonis(vegdist(OTUs, method = "bray") ~ Treatment, data = meta)
+```
+pairwise CD~NS F1
+```{r}
+set.seed(1)
+CDNS1 <- subset_samples(ps3raF1, Treatment %in% c("CD" , "NSD"))
+OTUs <- t(data.frame(otu_table(CDNS1))) #get data frame of OTUs from phyloseq object
+metaPW <- meta[meta$Treatment %in% c("NSD", "CD"),]
+adonis(vegdist(OTUs, method = "bray") ~ Treatment, data = metaPW)
+```
+
+# Differential Abundance Testing with DeSeq2
+fully filtered (prevalence, taxonomy) physeq object  = ps3
+```{r}
+#subset by Diet
+testdiets <- c("CD", "NSD")
+ps3cn <- subset_samples(ps3, Treatment %in% testdiets)
+
+#subset by generation
+ps3F0 <- subset_samples(ps3cn, Generation=="F0")
+ps3F1 <- subset_samples(ps3cn, Generation=="F1")
+
+#F0
+ddse <- phyloseq_to_deseq2(ps3F0, ~Treatment)
+ddse2 <- DESeq(ddse, test="Wald", fitType="parametric")
+res<- results(ddse2,  cooksCutoff = FALSE)
+alpha = 0.05
+sigtab = res[which(res$padj < alpha), ]
+head(sigtab)
+```
+
+14 SVs are differentially abundant in FO
+
+ log2 fold change (MLE): Treatment NSD vs CD 
+ NSD was compared to CD
+ + means more in NSD and - means less in NSD
+
+add taxonomy to significant feature
+```{r}
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(ps3F0)[rownames(sigtab), ], "matrix"))
+```
+
+figure for F0 results
+```{r}
+#D2 level
+x = tapply(sigtab$log2FoldChange, sigtab$D2, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$D2 = factor(as.character(sigtab$D2), levels=names(x))
+# D5 level
+x = tapply(sigtab$log2FoldChange, sigtab$D5, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$D5 = factor(as.character(sigtab$D5), levels=names(x))
+#plot F0
+F0sigplot<- ggplot(sigtab, aes(x=D2, y=log2FoldChange, color = D5)) + geom_point(size=3, alpha = 0.7) + theme(legend.title=element_blank()) +
+   ggtitle("F0 - log2 fold change (MLE): Treatment NSD vs CD ") +
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))# +scale_color_manual(values=P)
+
+F0sigplot
+```
+
+```{r}
+#make fold change table for all results (not significant)
+restab = cbind(as(res, "data.frame"), as(tax_table(ps3F0)[rownames(res), ], "matrix"))
+restabCC <- restab[complete.cases(restab),]
+#figure for all F0 results
+F0resplot<- ggplot(restabCC, aes(x=D2, y=log2FoldChange)) + geom_point(size=3, alpha = 0.7) + theme(legend.title=element_blank()) +
+  ggtitle("F1 - log2 fold change (MLE): Treatment NSD vs CD ") +
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))# +scale_color_manual(values=P)
+
+F0resplot
+```
+
+F1
+```{r}
+ddse <- phyloseq_to_deseq2(ps3F1, ~Treatment)
+ddse2 <- DESeq(ddse, test="Wald", fitType="parametric")
+res<- results(ddse2,  cooksCutoff = FALSE)
+alpha = 0.05
+sigtab = res[which(res$padj < alpha), ]
+head(sigtab)
+```
+No Significantly differnt SVs
+
+plot
+```{r}
+#make fold change table for all results (not significant)
+restab = cbind(as(res, "data.frame"), as(tax_table(ps3F1)[rownames(res), ], "matrix"))
+
+restabCC <- restab[complete.cases(restab),]
+#figure for F1 results
+
+F1resplot<- ggplot(restabCC, aes(x=D2, y=log2FoldChange)) + geom_point(size=3, alpha = 0.7) + theme(legend.title=element_blank()) +
+  ggtitle("F1 - log2 fold change (MLE): Treatment NSD vs CD ") +
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))# +scale_color_manual(values=P)
+
+F1resplot
+```
