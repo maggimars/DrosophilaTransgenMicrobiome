@@ -1,0 +1,371 @@
+---
+title: "Phyloseq_GreenGenes"
+author: "Maggi Brisbin"
+date: "9/25/2018"
+output: 
+  html_document:
+    toc: true # table of content true
+    toc_float: true
+    toc_depth: 5  # upto three depths of headings (specified by #, ## and ###)
+    number_sections: true  ## if you want number sections at each table header
+    theme: united  # many options for theme, this one is my favorite.
+    highlight: tango  # specifies the syntax highlighting style
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE, fig.path='figures/', fig.width=8, fig.height=5 )
+```
+
+Load Packages 
+```{r loadLibraries, message=FALSE}
+library("phyloseq")
+library("ggplot2")
+library("tidyr")
+library("RColorBrewer")
+library(reshape2)
+library("vegan")
+library(qiime2R)
+library(DESeq2)
+```
+
+set colors
+```{r}
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+P <- brewer.pal(12, "Paired")
+S2 <- brewer.pal(8, "Set2")
+S1 <- brewer.pal(8, "Set1")
+D2 <- brewer.pal(8, "Dark2")
+colors<- c(P, S2, S1,D2)
+colors <- rep(colors, 5)
+```
+
+# Load Data
+
+```{r}
+phyloseq<-qza_to_phyloseq(features="table.qza", tree = "rooted-tree.qza")
+```
+load metadata:
+```{r}
+metatable <- read.table("SampleINFO.txt", header = TRUE)
+row.names(metatable) <- metatable[[1]]
+metatable<- metatable[,(-1)]
+
+META<- sample_data(metatable)
+```
+
+
+load taxonomy:
+```{r}
+taxonomy <- read.csv("taxonomy.csv", stringsAsFactors = FALSE, header = TRUE)
+names(taxonomy) <- c("row", "tax", "Confidence")
+row.names(taxonomy) <-taxonomy[[1]]
+taxonomy <- taxonomy[,(-1)]
+
+taxonomy <-  separate(taxonomy, tax, c("D0","D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "D14"), sep = ";", fill = "right")
+taxonomy <- taxonomy[,c(1:7)]
+taxmat <- as.matrix(taxonomy)
+TAX = tax_table(taxmat)
+```
+
+
+add taxonomy to phyloseq object:
+```{r}
+ps = merge_phyloseq(phyloseq, TAX, META)
+
+```
+
+
+# GUT Samples 
+subset phyloseq object to include F0 and F1 No Sugar Diet and Control Diet
+```{r}
+psG <-subset_samples(ps,SampleType == 'Gut' & Generation %in% c('F0', 'F1') & AB== "A" & Treatment %in% c("NSD", "CD"))
+```
+## Taxonomy Barplot
+Transform count data to relative abundance (as %) to normalize for differences in library size.
+
+```{r}
+psGra<- transform_sample_counts(psG, function(OTU) 100* OTU/sum(OTU))
+```
+
+Plot
+```{R}
+taxabarplot<-plot_bar(psGra, fill = "D1") + scale_y_continuous(expand = c(0, 0)) + ggtitle("") + scale_fill_manual(values=colors) + theme(legend.title=element_blank()) + geom_bar(aes( fill=D3), stat="identity", position="stack")
+taxabarplot + theme(legend.position="none")
+```
+
+## Filtering
+### prevalence
+```{r}
+prevdf = apply(X = otu_table(psG),
+               MARGIN = ifelse(taxa_are_rows(psG), yes = 1, no = 2),
+               FUN = function(x){sum(x > 0)})
+
+prevdf = data.frame(Prevalence = prevdf,
+                    TotalAbundance = taxa_sums(psG),
+                    tax_table(psG))
+
+#plyr::ddply(prevdf, "D2", function(df1){cbind(mean(df1$Prevalence),sum(df1$Prevalence))})
+```
+
+prevalence plot:
+```{r}
+prevplot1<-ggplot(prevdf, aes(TotalAbundance, Prevalence / nsamples(ps),color=D2)) +
+  geom_hline(yintercept = 0.025, alpha = 0.5, linetype = 2) +  geom_point(size = 2, alpha = 0.7) + 
+  theme_bw()+
+  scale_x_log10() +  xlab("Total Abundance") + ylab("Prevalence [Frac. Samples]") +
+  facet_wrap(~D1) + theme(legend.position="none")
+
+prevplot1
+```
+
+*Filter at 2.5% prevalence *
+```{r}
+prevalenceThreshold = 0.025 * nsamples(psG)
+
+keepTaxa = rownames(prevdf)[(prevdf$Prevalence >= prevalenceThreshold)]
+ps2 = prune_taxa(keepTaxa, psG)
+
+#table(tax_table(ps2)[, "D2"], exclude = NULL)
+```
+```{r}
+prevdf = apply(X = otu_table(ps2),
+               MARGIN = ifelse(taxa_are_rows(ps2), yes = 1, no = 2),
+               FUN = function(x){sum(x > 0)})
+
+prevdf = data.frame(Prevalence = prevdf,
+                    TotalAbundance = taxa_sums(ps2),
+                    tax_table(ps2))
+
+#plyr::ddply(prevdf, "D2", function(df1){cbind(mean(df1$Prevalence),sum(df1$Prevalence))})
+
+prevplot1<-ggplot(prevdf, aes(TotalAbundance, Prevalence / nsamples(ps),color=D2)) +
+  geom_hline(yintercept = 0.01, alpha = 0.5, linetype = 2) +  geom_point(size = 2, alpha = 0.7) + 
+  theme_bw()+
+  scale_x_log10() +  xlab("Total Abundance") + ylab("Prevalence [Frac. Samples]") +
+  facet_wrap(~D1) + theme(legend.position="none")
+
+prevplot1
+```
+### taxonomic
+
+```{r}
+ps0 <- subset_taxa(ps2, !is.na(D1) & !D1 %in% c("", "uncharacterized", "p__"))
+```
+
+
+## Taxonomy Barplot 2
+Transform count data to relative abundance (as %) to normalize for differences in library size.
+
+```{r}
+ps0ra<- transform_sample_counts(ps0, function(OTU) 100* OTU/sum(OTU))
+```
+
+Plot
+```{R}
+taxabarplot<-plot_bar(ps0ra, fill = "D1") + scale_y_continuous(expand = c(0, 0)) + ggtitle("") + scale_fill_manual(values=colors) + theme(legend.title=element_blank()) + geom_bar(aes( fill=D3), stat="identity", position="stack")
+taxabarplot + theme(legend.position="none")
+```
+
+## Distance and Ordination 
+### Bray-Curtis
+Determine the Bray-Curtis distances between samples and perform Principal Coordinate Analysis (PCoA). Plot the PCoA. 
+```{r}
+ordu = ordinate(ps0ra, "PCoA", "bray")
+pbc<-plot_ordination(ps0ra, ordu, color="Treatment", shape = "Generation")+theme_bw() +scale_color_manual(values=P)+ geom_point(size=3)
+pbc
+```
+
+### Weighted Unifrac
+
+```{r}
+ordu2 = ordinate(ps0ra, "PCoA", "unifrac", weighted=TRUE)
+pwu<-plot_ordination(ps0ra, ordu2, color="Treatment", shape = "Generation")+theme_bw() +scale_color_manual(values=P)+ geom_point(size=3)
+pwu
+```
+
+### Unweighted Unifrac
+
+```{r}
+ordu3 = ordinate(ps0ra, "PCoA", "unifrac", weighted=FALSE)
+puu<-plot_ordination(ps0ra, ordu3, color="Treatment", shape = "Generation")+theme_bw() +scale_color_manual(values=P)+ geom_point(size=3)
+puu
+```
+
+## Adonis PERMANOVA
+###F0
+```{r}
+F0 <- subset_samples(ps0ra, Generation =="F0")
+```
+#### Bray-Curtis 
+```{r}
+set.seed(1)
+OTUs <- t(data.frame(otu_table(F0))) #get data frame of OTUs from phyloseq object
+meta <- subset(metatable, SampleType == 'Gut' & Generation == 'F0' & Treatment %in% c("NSD", "CD") & AB == "A")
+adonis(vegdist(OTUs, method = "bray") ~ Treatment, data = meta)
+```
+
+###F1
+```{r}
+F1 <- subset_samples(ps0ra, Generation =="F1")
+```
+#### Bray-Curtis 
+```{r}
+set.seed(1)
+OTUs <- t(data.frame(otu_table(F1))) #get data frame of OTUs from phyloseq object
+meta <- subset(metatable, SampleType == 'Gut' & Generation == 'F1' & Treatment %in% c("NSD", "CD"))
+adonis(vegdist(OTUs, method = "bray") ~ Treatment, data = meta)
+```
+
+## Differential Abundance Testing (DESeq2)
+###F1
+```{r}
+F1counts <-  subset_samples(ps0, Generation == "F1")
+ddse <- phyloseq_to_deseq2(F1counts, ~Treatment)
+```
+```{r}
+ddse2 <- DESeq(ddse, test="Wald", fitType="parametric")
+```
+```{r}
+res<- results(ddse2,  cooksCutoff = FALSE, contrast=c("Treatment", "NSD", "CD"))
+alpha = 0.05
+sigtab = res[which(res$padj < alpha), ]
+head(sigtab)
+```
+```{r}
+dim(sigtab)
+```
+Only one SV is significantly differentially abundant ...
+
+Taxonomy?
+```{r}
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(F1counts)[rownames(sigtab), ], "matrix"))
+sigtab
+```
+
+Pseudomonas  (same as last round of analysis, I think?)
+
+# MEDIA Samples 
+subset phyloseq object to include F0 and F1 No Sugar Diet and Control Diet
+```{r}
+psM <-subset_samples(ps,SampleType == 'Media' & Generation %in% c('F0', 'F1') & AB== "A" & Treatment %in% c("NSD", "CD"))
+```
+
+Transform count data to relative abundance (as %) to normalize for differences in library size.
+
+```{r}
+psMra<- transform_sample_counts(psM, function(OTU) 100* OTU/sum(OTU))
+```
+
+Plot
+```{R}
+taxabarplot<-plot_bar(psMra, fill = "D3") + scale_y_continuous(expand = c(0, 0)) + ggtitle("") + scale_fill_manual(values=colors) + theme(legend.title=element_blank()) + geom_bar(aes( fill=D3), stat="identity", position="stack")
+taxabarplot + theme(legend.position="none")
+```
+
+## Filtering
+### prevalence
+```{r}
+prevdf = apply(X = otu_table(psM),
+               MARGIN = ifelse(taxa_are_rows(psM), yes = 1, no = 2),
+               FUN = function(x){sum(x > 0)})
+
+prevdf = data.frame(Prevalence = prevdf,
+                    TotalAbundance = taxa_sums(psM),
+                    tax_table(psM))
+
+#plyr::ddply(prevdf, "D2", function(df1){cbind(mean(df1$Prevalence),sum(df1$Prevalence))})
+```
+
+prevalence plot:
+```{r}
+prevplot1<-ggplot(prevdf, aes(TotalAbundance, Prevalence / nsamples(ps),color=D2)) +
+  geom_hline(yintercept = 0.025, alpha = 0.5, linetype = 2) +  geom_point(size = 2, alpha = 0.7) + 
+  theme_bw()+
+  scale_x_log10() +  xlab("Total Abundance") + ylab("Prevalence [Frac. Samples]") +
+  facet_wrap(~D1) + theme(legend.position="none")
+
+prevplot1
+```
+No prevalence filtering for media samples (at least for now) - just remove NA at Phylum level
+
+### taxonomic
+```{r}
+ps0 <- subset_taxa(psM, !is.na(D1) & !D1 %in% c("", "uncharacterized", "p__"))
+```
+
+##DESeq2
+```{r}
+ddse <- phyloseq_to_deseq2(ps0, ~Treatment)
+```
+
+
+```{r}
+dds <- ddse[ rowSums(counts(ddse)) > 1, ]
+rld <- rlog(dds, blind=TRUE)
+```
+
+```{r}
+df <- as.data.frame(assay(rld))
+```
+add taxonomy 
+```{r}
+tab = cbind(df, as(tax_table(ps0)[rownames(df), ], "matrix"))
+tab <- tab[1:36]
+```
+
+```{r}
+m <- melt(tab, id=c("D0", "D1", "D2", "D3"))
+```
+
+plot D1
+```{r}
+tabplot<-ggplot(m, aes(x=variable, y=value, color = D1)) + geom_point(size=3, alpha = 0.7) + theme(legend.title=element_blank()) + theme_bw() +
+   ggtitle("log2 normalized counts ") +
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))# +scale_color_manual(values=P)
+tabplot
+```
+plot D2
+```{r}
+tabplot<-ggplot(m, aes(x=variable, y=value, color = D2)) + geom_point(size=3, alpha = 0.7) + theme(legend.title=element_blank()) + theme_bw() +
+   ggtitle("log2 normalized counts ") +
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))# +scale_color_manual(values=P)
+tabplot
+```
+plot D3
+```{r}
+tabplot<-ggplot(m, aes(x=variable, y=value, color = D3)) + geom_point(size=3, alpha = 0.7) + theme(legend.title=element_blank()) + theme_bw() +
+   ggtitle("log2 normalized counts ") +
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))# +scale_color_manual(values=P)
+tabplot
+```
+
+*Get rid of Outliers and plot again* 
+```{r}
+mNOout <- m[m$value < 30,]
+```
+
+plot D1
+```{r}
+tabplot<-ggplot(mNOout, aes(x=variable, y=value, color = D1)) + geom_point(size=3, alpha = 0.7) + theme(legend.title=element_blank()) + theme_bw() +
+   ggtitle("log2 normalized counts ") +
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))# +scale_color_manual(values=P)
+tabplot
+```
+
+plot D2
+```{r}
+tabplot<-ggplot(mNOout, aes(x=variable, y=value, color = D2)) + geom_point(size=3, alpha = 0.7) + theme(legend.title=element_blank()) + theme_bw() +
+   ggtitle("log2 normalized counts ") +
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))# +scale_color_manual(values=P)
+tabplot
+```
+
+plot D3
+```{r}
+tabplot<-ggplot(mNOout, aes(x=variable, y=value, color = D3)) + geom_point(size=2, alpha = 0.7) + theme(legend.title=element_blank()) + theme_bw() +
+   ggtitle("log2 normalized counts ") +
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))# +scale_color_manual(values=colors)
+tabplot
+```
+
+
